@@ -1,0 +1,447 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>SQL Query Simulator (in-memory)</title>
+<style>
+  body{font-family:Inter,system-ui,Segoe UI,Roboto,Arial;margin:18px;background:#f7fafc;color:#0f172a}
+  .wrap{max-width:1100px;margin:0 auto}
+  header{display:flex;align-items:center;justify-content:space-between}
+  h1{margin:0 0 8px;font-size:20px}
+  .grid{display:grid;grid-template-columns:1fr 360px;gap:16px}
+  textarea.query{width:100%;height:140px;font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, 'Roboto Mono',monospace;padding:10px;border-radius:8px;border:1px solid #e2e8f0}
+  .card{background:#fff;padding:12px;border-radius:10px;border:1px solid #e6eef6}
+  button{background:#0369a1;color:#fff;border:none;padding:8px 12px;border-radius:8px;cursor:pointer}
+  select,input{padding:6px;border-radius:6px;border:1px solid #cbd5e1}
+  table{width:100%;border-collapse:collapse;margin-top:8px}
+  th,td{border:1px solid #e6eef6;padding:6px;text-align:left}
+  .small{font-size:13px;color:#475569}
+  pre.res{background:#0f172a;color:#e6eef6;padding:10px;border-radius:6px;overflow:auto}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <h1>SQL Query Simulator — Run SQL-like queries on JS arrays</h1>
+      <div class="small">Supports SELECT, WHERE, ORDER BY, GROUP BY, HAVING, COUNT/SUM/AVG, UNION/INTERSECT/EXCEPT and simple nested subselects (IN (...)).</div>
+    </div>
+    <div>
+      <button id="load-samples">Load Sample Queries</button>
+    </div>
+  </header>
+
+  <div style="height:12px"></div>
+
+  <div class="grid">
+    <main>
+      <div class="card">
+        <label><strong>Query</strong></label>
+        <textarea id="query" class="query" placeholder="Type SQL-like query here...">SELECT dept, COUNT() as cnt, AVG(salary) as avg_sal FROM employees WHERE salary &gt; 3000 GROUP BY dept HAVING COUNT() &gt; 1 ORDER BY avg_sal DESC;</textarea>
+        <div style="margin-top:8px;display:flex;gap:8px;">
+          <button id="run">Run</button>
+          <button id="explain">Explain Plan</button>
+          <button id="clear">Clear</button>
+        </div>
+
+        <div id="output" style="margin-top:12px"></div>
+      </div>
+
+      <div class="card" style="margin-top:12px">
+        <strong>Result (JSON)</strong>
+        <pre id="resultJson" class="res">[]</pre>
+      </div>
+
+    </main>
+
+    <aside>
+      <div class="card">
+        <strong>Tables (in-memory)</strong>
+        <div class="small">You can edit tables below in JS (sample data provided).</div>
+        <div style="margin-top:8px">
+          <label class="small">Choose table:</label>
+          <select id="tableSelect"></select>
+        </div>
+        <div id="tableContainer" style="margin-top:10px;max-height:360px;overflow:auto"></div>
+      </div>
+
+      <div class="card" style="margin-top:12px">
+        <strong>Quick Examples</strong>
+        <ul class="small">
+          <li><code>SELECT name, salary FROM employees WHERE dept='IT' ORDER BY salary DESC;</code></li>
+          <li><code>SELECT dept, SUM(salary) FROM employees GROUP BY dept;</code></li>
+          <li><code>SELECT * FROM orders WHERE customer_id IN (SELECT id FROM customers WHERE city='Pune');</code></li>
+          <li><code>SELECT name FROM employees UNION SELECT name FROM contractors;</code></li>
+        </ul>
+      </div>
+    </aside>
+  </div>
+
+  <footer style="margin-top:18px" class="small">This simulator is intentionally limited (safe subset of SQL). Use for learning and quick experimentation.</footer>
+</div>
+
+<script>
+// --- In-memory tables ---
+const DB = {
+  employees: [
+    {id:1, name:'Manan', dept:'HR', salary:60000, age:18},
+    {id:2, name:'Priyansh', dept:'IT', salary:50000, age:19},
+    {id:3, name:'Arsh', dept:'IT', salary:55000, age:18},
+    {id:4, name:'Ghanisth', dept:'Sales', salary:45000, age:20},
+    {id:5, name:'Harsh', dept:'Sales', salary:48000, age:21}
+  ],
+  customers: [
+    {id:10, name:'Tanishq', city:'Bharatpur'},
+    {id:11, name:'Rahul', city:'Dehradun'},
+    {id:12, name:'Ronak', city:'Dehradun'}
+  ],
+  orders: [
+    {id:100, customer_id:10, total:1200},
+    {id:101, customer_id:12, total:600},
+    {id:102, customer_id:11, total:2500}
+  ],
+  contractors: [
+    {id:201, name:'Tejas', salary:88000},
+    {id:202, name:'Aman', salary:41000}
+  ]
+};
+
+// populate table select
+const tableSelect = document.getElementById('tableSelect');
+function refreshTableList(){
+  tableSelect.innerHTML='';
+  for(const t of Object.keys(DB)){
+    const opt=document.createElement('option'); opt.value=t; opt.textContent=t; tableSelect.appendChild(opt);
+  }
+}
+refreshTableList();
+
+function renderTable(name){
+  const cont = document.getElementById('tableContainer'); cont.innerHTML='';
+  const rows = DB[name] || [];
+  if(rows.length===0){ cont.innerHTML = '<div class="small">(empty)</div>'; return }
+  const table = document.createElement('table');
+  const thead = document.createElement('thead'); const tr = document.createElement('tr');
+  Object.keys(rows[0]).forEach(h=>{ const th = document.createElement('th'); th.textContent = h; tr.appendChild(th)});
+  thead.appendChild(tr); table.appendChild(thead);
+  const tbody = document.createElement('tbody');
+  rows.forEach(r=>{ const tr=document.createElement('tr'); Object.values(r).forEach(v=>{ const td=document.createElement('td'); td.textContent = v; tr.appendChild(td)}); tbody.appendChild(tr)});
+  table.appendChild(tbody); cont.appendChild(table);
+}
+renderTable(tableSelect.value);
+tableSelect.addEventListener('change', ()=> renderTable(tableSelect.value));
+
+// --- Simple SQL-like parser & executor ---
+// Note: This is a lightweight educational parser for a safe subset of SQL-like queries.
+
+function runSQL(text){
+  // handle set operations (UNION/INTERSECT/EXCEPT) first
+  const setOps = /\s+(UNION|INTERSECT|EXCEPT)\s+/i;
+  if(setOps.test(text)){
+    // split by set ops preserving operators
+    const parts = text.split(/\s+(UNION|INTERSECT|EXCEPT)\s+/i).map(s=>s.trim()).filter(s=>s);
+    // parts array like [q1, op, q2, op, q3...]
+    let res = execSingle(parts[0]);
+    for(let i=1;i<parts.length;i+=2){
+      const op = parts[i].toUpperCase();
+      const right = execSingle(parts[i+1]);
+      res = applySetOp(res, right, op);
+    }
+    return res;
+  } else {
+    return execSingle(text);
+  }
+}
+
+function applySetOp(left, right, op){
+  const toKey = r=>JSON.stringify(r);
+  const lset = new Set(left.map(toKey));
+  const rset = new Set(right.map(toKey));
+  if(op==='UNION'){
+    const union = Array.from(new Set([...Array.from(lset), ...Array.from(rset)])).map(k=>JSON.parse(k));
+    return union;
+  } else if(op==='INTERSECT'){
+    const inter = Array.from(lset).filter(k=>rset.has(k)).map(k=>JSON.parse(k));
+    return inter;
+  } else if(op==='EXCEPT'){
+    const diff = Array.from(lset).filter(k=>!rset.has(k)).map(k=>JSON.parse(k));
+    return diff;
+  }
+  return [];
+}
+
+function execSingle(qtext){
+  // naive tokenization: remove trailing semicolon
+  qtext = qtext.trim().replace(/;$/,'');
+  // support nested IN (SELECT ...)
+  // Replace subselects in IN (...) by their results
+  qtext = qtext.replace(/IN\s*\(\s*SELECT[\s\S]*?\)/ig, m=>{
+    // extract inner SELECT
+    const inner = m.slice(m.indexOf('(')+1, m.lastIndexOf(')'));
+    const innerRes = execSingle(inner);
+    // if inner returns objects, replace with list of scalar values (assume single column)
+    const vals = innerRes.map(r=>{
+      const keys = Object.keys(r); return r[keys[0]];
+    });
+    // return IN (v1,v2,...)
+    const esc = vals.map(v=>typeof v==='string'?"'"+v.replace(/'/g,"''")+"'":v).join(',');
+    return 'IN (' + esc + ')';
+  });
+
+  // parse SELECT ... FROM ... [WHERE ...] [GROUP BY ...] [HAVING ...] [ORDER BY ...]
+  const selectMatch = qtext.match(/^SELECT\s+([\s\S]+?)\s+FROM\s+([\w]+)\s*(.*)$/i);
+  if(!selectMatch) throw new Error('Query must be of form SELECT ... FROM table ...');
+  const selectExpr = selectMatch[1].trim();
+  const table = selectMatch[2].trim();
+  const rest = selectMatch[3].trim();
+  if(!(table in DB)) throw new Error('Unknown table: ' + table);
+  let rows = DB[table].map(r=>Object.assign({},r)); // clone
+
+  // WHERE
+  const whereMatch = rest.match(/WHERE\s+([\s\S]*?)(GROUP BY|HAVING|ORDER BY|$)/i);
+  if(whereMatch){
+    const cond = whereMatch[1].trim();
+    rows = rows.filter(r => evalCondition(cond, r));
+  }
+
+  // GROUP BY
+  const groupByMatch = rest.match(/GROUP BY\s+([\w,\s]+)\s*(HAVING|ORDER BY|$)/i);
+  let grouped = null;
+  if(groupByMatch){
+    const groups = groupByMatch[1].split(',').map(s=>s.trim());
+    grouped = groupRows(rows, groups);
+  }
+
+  // projection and aggregates
+  const proj = parseSelectList(selectExpr);
+  let result = [];
+  if(grouped){
+    // grouped: each group is array of rows
+    for(const g of Object.keys(grouped)){
+      const groupRowsArr = grouped[g];
+      const context = makeAggContext(groupRowsArr);
+      // each projection expression evaluated in context
+      const out = {};
+      for(const p of proj){
+        if(p.type==='*'){
+          // include all columns from the first row
+          Object.assign(out, groupRowsArr[0]);
+        } else if(p.type==='expr'){
+          out[p.as] = evalExprInContext(p.expr, groupRowsArr);
+        }
+      }
+      // attach group-by columns
+      const sample = groupRowsArr[0];
+      for(const gb of Object.keys(grouped._groups[g].keyObj)){
+        out[gb] = grouped._groups[g].keyObj[gb];
+      }
+      result.push(out);
+    }
+    // HAVING
+    const havingMatch = rest.match(/HAVING\s+([\s\S]*?)(ORDER BY|$)/i);
+    if(havingMatch){
+      const cond = havingMatch[1].trim();
+      result = result.filter(r => evalCondition(cond, r, true));
+    }
+  } else {
+    // no grouping -> project per row
+    for(const row of rows){
+      const out = {};
+      for(const p of proj){
+        if(p.type==='*'){ Object.assign(out, row); }
+        else if(p.type==='expr'){
+          out[p.as] = evalExprInRow(p.expr, row);
+        }
+      }
+      result.push(out);
+    }
+  }
+
+  // ORDER BY
+  const orderMatch = rest.match(/ORDER BY\s+([\w\s,]+)(ASC|DESC)?/i);
+  if(orderMatch){
+    const cols = orderMatch[1].split(',').map(s=>s.trim());
+    const dir = (orderMatch[2]||'ASC').toUpperCase();
+    result.sort((a,b)=>{
+      for(const c of cols){
+        const ca = a[c], cb = b[c]; if(ca==cb) continue;
+        if(ca==null) return -1; if(cb==null) return 1;
+        if(typeof ca==='number' && typeof cb==='number') return dir==='ASC'?ca-cb:cb-ca;
+        return dir==='ASC'? (''+ca).localeCompare(''+cb) : (''+cb).localeCompare(''+ca);
+      }
+      return 0;
+    });
+  }
+
+  return result;
+}
+
+function parseSelectList(sel){
+  const parts = splitTopLevel(sel, ',');
+  return parts.map(praw=>{
+    const p = praw.trim();
+    if(p==='') return {type:''};
+    // alias AS
+    const asMatch = p.match(/\s+AS\s+(\w+)$/i);
+    let as = null; let expr = p;
+    if(asMatch){ as = asMatch[1]; expr = p.slice(0, asMatch.index).trim(); }
+    else{
+      const sp = p.split(/\s+/); if(sp.length===1) as = p; else as = p.replace(/\W/g,'_');
+    }
+    return {type:'expr', expr:expr, as: as};
+  });
+}
+
+function splitTopLevel(s, sep){
+  const res=[]; let cur=''; let depth=0;
+  for(let i=0;i<s.length;i++){
+    const ch=s[i];
+    if(ch==='(') depth++; else if(ch===')') depth--; if(depth<0) depth=0;
+    if(depth===0 && s.slice(i,i+sep.length)===sep){ res.push(cur); cur=''; i+=sep.length-1; continue; }
+    cur+=ch;
+  }
+  if(cur.trim()!=='') res.push(cur); return res.map(x=>x.trim());
+}
+
+function groupRows(rows, groupCols){
+  const groups={}; groups._groups = {};
+  rows.forEach(r=>{
+    const keyObj = {}; groupCols.forEach(c=> keyObj[c]=r[c]);
+    const key = JSON.stringify(keyObj);
+    if(!groups[key]){ groups[key]=[]; groups._groups[key]={keyObj}; }
+    groups[key].push(r);
+  });
+  return groups;
+}
+
+function makeAggContext(groupRowsArr){
+  return {
+    COUNT: (col)=> groupRowsArr.length,
+    SUM: (col)=> groupRowsArr.reduce((s,row)=> s + (Number(row[col])||0), 0),
+    AVG: (col)=> { const sum = groupRowsArr.reduce((s,row)=> s + (Number(row[col])||0), 0); return groupRowsArr.length?sum/groupRowsArr.length:0 },
+    MIN: (col)=> groupRowsArr.reduce((a,b)=> a==null?b[col]: (b[col]<a?b[col]:a), null),
+    MAX: (col)=> groupRowsArr.reduce((a,b)=> a==null?b[col]: (b[col]>a?b[col]:a), null)
+  };
+}
+
+function evalExprInRow(expr, row){
+  // basic expressions: col, number, string, aggregate functions not allowed here
+  // replace column names by row['col']
+  return safeEvalExpr(expr, r=>row[r]);
+}
+
+function evalExprInContext(expr, groupRowsArr){
+  // detect aggregates like SUM(col) or COUNT(*)
+  const mCount = expr.match(/^COUNT\(\*\)$/i);
+  if(mCount) return groupRowsArr.length;
+  const aggMatch = expr.match(/^(COUNT|SUM|AVG|MIN|MAX)\s*\(\s*([\w]+)\s*\)$/i);
+  if(aggMatch){ const fn = aggMatch[1].toUpperCase(); const col = aggMatch[2]; const ctx = makeAggContext(groupRowsArr); return ctx[fn](col); }
+  // or simple expression with column names (take first row)
+  return safeEvalExpr(expr, r=>groupRowsArr[0][r]);
+}
+
+function evalCondition(cond, row, forHaving=false){
+  // if forHaving, cond may refer to aggregate names computed in projection; we'll evaluate using row values
+  // Simple approach: replace column names with row['col'] in condition, support IN lists
+  // replace IN (...) already substituted earlier
+  // replace column names (words) with row['word']
+  return safeEvalExpr(cond, colName=>{
+    if(colName in row) return row[colName];
+    // try numeric
+    if(!isNaN(Number(colName))) return Number(colName);
+    return undefined;
+  }) ? true : false;
+}
+
+function safeEvalExpr(expr, resolver){
+  try{
+    // replace column-like tokens with resolver('col')
+    // token regex: words (letters, digits, underscore)
+    const tokenized = expr.replace(/([A-Za-z_][A-Za-z0-9_\.]*)/g, (m)=>{
+      // avoid replacing SQL keywords and function names
+      const up = m.toUpperCase();
+      const keywords = ['AND','OR','IN','LIKE','IS','NULL','NOT','BETWEEN','EXISTS','SELECT','FROM','WHERE','GROUP','BY','HAVING','ORDER','ASC','DESC'];
+      if(keywords.includes(up)) return up;
+      // functions like SUM(...)
+      if(/^(COUNT|SUM|AVG|MIN|MAX)\($/i.test(m + '(')) return m;
+      const val = resolver(m);
+      if(typeof val==='string') return '' + val.replace(//g,'\\') + '';
+      if(val===undefined) return 'undefined';
+      return JSON.stringify(val);
+    });
+    // now convert SQL operators to JS
+    let js = tokenized.replace(/=\s*([^=])/g,'==$1');
+    js = js.replace(/<>/g,'!=');
+    js = js.replace(/\bAND\b/ig,'&&').replace(/\bOR\b/ig,'||');
+    // replace backtick string markers ... with quoted strings
+    js = js.replace(/([^]*)`/g, function(_,a){ return JSON.stringify(a) });
+    // evaluate safely using Function
+    // disallow certain names
+    if(/[;]|require\(|process\.|window\.|document\./i.test(js)) throw new Error('Unsafe expression');
+    // eslint-disable-next-line no-new-func
+    const fn = new Function('return (' + js + ')');
+    return fn();
+  } catch(e){ console.warn('Eval error on',expr,e); return false }
+}
+
+function parseSelectListPreview(sel){
+  return parseSelectList(sel).map(p=>p.as||p.expr||'*').join(', ');
+}
+
+// --- UI wiring ---
+const queryEl = document.getElementById('query');
+const runBtn = document.getElementById('run');
+const output = document.getElementById('output');
+const resultJson = document.getElementById('resultJson');
+runBtn.addEventListener('click', ()=>{
+  try{
+    const q = queryEl.value.trim();
+    const res = runSQL(q);
+    // show table if rows have same keys
+    output.innerHTML='';
+    if(res.length===0){ output.innerHTML = '<div class="small">(no rows)</div>'; resultJson.textContent = JSON.stringify(res, null, 2); return }
+    // build table
+    const cols = Array.from(new Set(res.flatMap(r=>Object.keys(r))));
+    const table = document.createElement('table'); const thead=document.createElement('thead'); const tr=document.createElement('tr'); cols.forEach(c=>{ const th=document.createElement('th'); th.textContent=c; tr.appendChild(th)}); thead.appendChild(tr); table.appendChild(thead);
+    const tbody=document.createElement('tbody'); res.forEach(r=>{ const tr=document.createElement('tr'); cols.forEach(c=>{ const td=document.createElement('td'); td.textContent = (r[c]!==undefined? r[c] : ''); tr.appendChild(td)}); tbody.appendChild(tr)}); table.appendChild(tbody);
+    output.appendChild(table);
+    resultJson.textContent = JSON.stringify(res, null, 2);
+  }catch(e){ alert('Error: ' + e.message) }
+});
+
+// explain
+document.getElementById('explain').addEventListener('click', ()=>{
+  try{
+    const q = queryEl.value.trim();
+    // naive explanation: split by clauses
+    const expl = [];
+    expl.push('Parsed Clauses:');
+    const sel = q.match(/^SELECT\s+([\s\S]+?)\s+FROM/i);
+    const from = q.match(/FROM\s+([\w]+)/i);
+    const where = q.match(/WHERE\s+([\s\S]*?)(GROUP BY|HAVING|ORDER BY|$)/i);
+    const group = q.match(/GROUP BY\s+([\w,\s]+)/i);
+    const order = q.match(/ORDER BY\s+([\w,\s]+)/i);
+    expl.push(sel?('SELECT: ' + sel[1].trim()):'SELECT: (missing)');
+    expl.push(from?('FROM: ' + from[1]):'FROM: (missing)');
+    expl.push(where?('WHERE: ' + where[1].trim()):'WHERE: (none)');
+    expl.push(group?('GROUP BY: ' + group[1].trim()):'GROUP BY: (none)');
+    expl.push(order?('ORDER BY: ' + order[1].trim()):'ORDER BY: (none)');
+    output.innerHTML = '<pre class="small">' + expl.join('\n') + '</pre>';
+  }catch(e){ alert('Error: '+e.message) }
+});
+
+// clear
+document.getElementById('clear').addEventListener('click', ()=>{ queryEl.value=''; output.innerHTML=''; resultJson.textContent='[]'; });
+
+// load sample queries
+document.getElementById('load-samples').addEventListener('click', ()=>{
+  queryEl.value = "SELECT dept, COUNT() as cnt, AVG(salary) as avg_sal FROM employees GROUP BY dept HAVING COUNT() > 1 ORDER BY avg_sal DESC;";
+});
+
+// initial render of default table
+renderTable(tableSelect.value);
+
+</script>
+</body>
+</html>
